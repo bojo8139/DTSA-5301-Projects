@@ -1,0 +1,227 @@
+---
+title: "COVID19 Data Analysis"
+author: "Bojan Jovanović"
+date: "30 january 2024"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(tinytex.verbose = TRUE)
+```
+
+## Prerequisites
+
+To be able to successfully complete our analysis, we have to include some R libraries we will need in the process. Those include **tinytex, tidyverse, dplyr and ggplot2**.
+
+```{r libraries}
+library("tinytex")
+library("tidyverse")
+library("dplyr")
+library("ggplot2")
+```
+
+## Importing COVID 19 Data
+
+Before we continue with our analysis, we have to import the data first. In this report, we will be analyzing "*COVID 19 data*", which is provided to us by John Hopkins University. The dataset includes **data about covid cases and deaths in US and worldwide** from 22nd of January 2020, up until the 9th march of 2023. The dataset is not updated with new data anymore.
+
+More info about this dataset can be found [at this link](https://github.com/CSSEGISandData/COVID-19/tree/master/csse_covid_19_data/csse_covid_19_time_series).
+
+The dataset includes information about **Country/State, latitude and longitude**, as well as the **cumulative number of cases/deaths** for every day from January 22nd 2020 to 9th of March 2023. Every row in data corresponds to a single geographical area, while there is a single column for each date.
+
+```{r import_data}
+## NOTE: IF ERROR HAPPENS IN THIS CHUNK ON FIRST RUN, RUN IT ONCE AGAIN!
+## FOR SOME WEIRD REASON, DATA IMPORT CAN FAIL ON FIRST RUN
+## HOWEVER, IT SUCCED ON SUBSEQUENT ATTEMPTS
+us_cases_loc <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv"
+us_deaths_loc <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv"
+global_cases_loc <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
+global_deaths_loc <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv"
+
+us_cases_data <- read_csv(us_cases_loc)
+us_deaths_data <- read_csv(us_deaths_loc)
+global_cases_data <- read_csv(global_cases_loc)
+global_deaths_data <- read_csv(global_deaths_loc)
+```
+
+## Tidying Our Data
+
+
+### Filtering out Columns we Won't Need
+
+For our further analysis, we will need country level data. Thus we will select *Country/State*, *Latitude* and *Longitude* columns. As we will be working with total cases/deaths for each country, we will select *only the latest date column*, which shows the total number of recorded cases/deaths.
+
+### Renaming Columns
+
+There is a **slight difference in the naming of columns** between global and US datasets. We will fix this discrepancy by renaming columns. This will prove very beneficial when we get to joining our data. Also, we will rename the final date column into cases/deaths, to better showcase what its value mean.
+
+### Aggregating Data
+
+In those datasets, most of the countries have data reported at country level. However, larger countries like United States, China or Australia, have their data reported at State/Province levels. We will aggregate this data, so **all values reported are at the Country level**.
+
+### Calculating Death Rates
+
+In our analysis, we will be working with death rates. To calculate death rates, we have to join cases and deaths datasets. Then, we will calculate the death rate by **dividing the total number of deaths by the total number of cases**.
+
+### Removing Nonsensical Data
+
+After performing aforementioned steps, we have compiled a dataset appropriate for our following analysis. However, by further checking the values in it, we have found some nonsensical data. For example, Antartica has the **death rate of zero** (and just 11 cases), just like records named **Summer Olympics 2020 and Winter Olympics 2022**. Also, North Korea has the **death rate of 600%**, with one case and six deaths.
+
+Clearly, such data is not correct. So, **we will remove all the records with the death rate of zero and over 100%**.
+
+Also, we will remove records with **latitude and longitude of zero**. Such records are not corresponding to any countries (One such record is for Diamond Princess cruise ship).
+
+
+```{r tidy_data}
+
+## FILTER OUT COLUMNS
+us_cases_filtered <- us_cases_data %>% select(Country_Region, Lat, Long_, "3/9/23")
+us_deaths_filtered <- us_deaths_data %>% select(Country_Region, Lat, Long_, "3/9/23")
+global_cases_filtered <- global_cases_data %>% select("Country/Region", Lat, Long, "3/9/23")
+global_deaths_filtered <- global_deaths_data %>% select("Country/Region", Lat, Long, "3/9/23")
+
+## RENAME COLUMNS
+us_cases_filtered <- us_cases_filtered %>% rename("Country/Region" = "Country_Region", 
+                                                  "Long" = "Long_", "Cases" = "3/9/23")
+us_deaths_filtered <- us_deaths_filtered %>% rename("Country/Region" = "Country_Region", 
+                                                  "Long" = "Long_", "Deaths" = "3/9/23")
+global_cases_filtered <- global_cases_filtered %>% rename("Cases" = "3/9/23")
+global_deaths_filtered <- global_deaths_filtered %>% rename("Deaths" = "3/9/23")
+
+## AGGREGATE DATA
+us_cases_aggregated <- us_cases_filtered %>% group_by(`Country/Region`) %>% 
+                      summarise(Lat = mean(Lat, na.rm = TRUE), 
+                                Long = mean(Long, na.rm = TRUE), 
+                                Cases = sum(Cases))
+us_deaths_aggregated <- us_deaths_filtered %>% group_by(`Country/Region`) %>% 
+                      summarise(Lat = mean(Lat, na.rm = TRUE), 
+                                Long = mean(Long, na.rm = TRUE), 
+                                Deaths = sum(Deaths))
+global_cases_aggregated <- global_cases_filtered %>% group_by(`Country/Region`) %>% 
+                      summarise(Lat = mean(Lat, na.rm = TRUE), 
+                                Long = mean(Long, na.rm = TRUE), 
+                                Cases = sum(Cases))
+global_deaths_aggregated <- global_deaths_filtered %>% group_by(`Country/Region`) %>% 
+                      summarise(Lat = mean(Lat, na.rm = TRUE), 
+                                Long = mean(Long, na.rm = TRUE), 
+                                Deaths = sum(Deaths))
+
+## JOIN DATA AND CALCULATE DEATH RATE
+us_joined <- us_cases_aggregated %>% 
+              inner_join(us_deaths_aggregated) %>% 
+              mutate("Death Rate" = Deaths/Cases)
+
+global_joined <- global_cases_aggregated %>% 
+              inner_join(global_deaths_aggregated) %>% 
+              mutate("Death Rate" = Deaths/Cases)
+
+data_tidy <- bind_rows(us_joined, global_joined)
+
+## REMOVE NONSENSICAL DATA
+data_tidy <- data_tidy %>% filter((Lat != 0 | Long != 0) & 
+                              `Death Rate` > 0 & `Death Rate` < 1)
+
+summary(data_tidy)
+```
+
+## Data Analysis
+
+In this part of our report, we will analyze our prepared data. Our main research question will be **whether geographical location (Latitude/Longitude) of a country affects the death rate from COVID 19 infection**.
+
+Before everything else, we will try to roughly estimate whether there is some effect on COVID 19 deadlieness due to the geographical location. To do so, we will create **a scatterplot with markers of different sizes**, correlating latitude and longitude to the death rate.
+
+We will also create **line plots**, comparing the death rate against latitude and longitude independently. Hopefully, we will detect some trends there.
+
+```{r plots}
+## PLOT DEATH RATE AGAINT LATITUDE/LONGITUDE
+ggplot(data=data_tidy) + 
+  geom_point(aes(x=Lat, y=Long, size=`Death Rate`, color=`Death Rate`)) +
+  scale_size_continuous(range = c(0.3, 7)) +
+  scale_color_gradient(low="royalblue", high="maroon") + 
+  scale_x_continuous(limits=c(-80,80)) +
+  scale_y_continuous(limits=c(-200,200)) +
+  ggtitle("Death Rate vs Geographical Location")
+
+## PLOT DEATH RATE AGAINST LATITUDE
+ggplot(data=data_tidy) + 
+  geom_line(aes(x=Lat, y=`Death Rate`)) +
+  ggtitle("Death Rate vs Latitude")
+
+## PLOT DEATH RATE AGAINS LONGITUDE
+ggplot(data=data_tidy) + 
+  geom_line(aes(x=Long, y=`Death Rate`)) +
+  ggtitle("Death Rate vs Longitude")
+```
+
+### Analyzing out Plots
+
+From the plots we have created, there is **no clear trend between the latitude/longitude and death rate**. However, we do see few observations with greater death rate being grouped around longitude of 40 degrees.
+
+To analyze our observations further, we will fit **a standard linear regression model** on our data, hoping it will reveal something we did miss from our plots. We will try to predict the outcome of Death Rate by predictors Latitude and Longitude.
+
+
+```{r regression}
+## FITTING LOGISTIC REGRESSION
+model <- lm(formula=`Death Rate`~Lat+Long, data=data_tidy)
+
+## DIAGNOSTIC PLOTS
+plot(model)
+
+## MODEL SUMMARY
+summary(model)
+```
+
+We fitted our model as described previously. However, after we fit any model, we should **diagnose how well it fitted our data**. We have ploted default R diagnostics plots and analyzed them.
+
+By looking at Q-Q residuals plot and Residuals vs Fitted, we se that residuals roughly follow a linear trend, Normal distribution and doesn't deviate much from the constant variance, with few outliers acros the range of observations. Thus, we will conclude that **linear regression assumptions are sufficiently satisfied** and we will continue with model interpretation.
+
+
+
+## Conslussion of the Analysis
+
+By looking at the summary of the model, we see coefficients for latitude and longitude are not statistically significant. Thus, we did not find any evidence for our research question.
+
+By taking our plots into account and the model we have fitted, it seems like **there is no relation between geografical position and death rate** from ĆOVID 19.
+
+
+
+## Bias Identification
+
+### Data Reporting Bias
+
+The most obvious bias for me is the **bias related to data reporting**. We know that different countries used different methodologies for reporting COVID 19 deaths, which could possibly skew our data.
+
+We have to admit that there is a possibility of **malicious data reporting**. For example, China had been acussed by many countries of hiding cases and deaths, so news of novel Coronavirus don't negativelly affect their trade business. Austria was also accused of hiding data, to preserve their skiing season in Alps.
+
+There are many other countries accused of **hiding true death rate**. We know that might be true by looking at the reports of **excess deaths** in those countries. For example, excess death analysis of data in my homecountry indicates possibility of up to 3 times more deaths from COVID 19 than what was reported.
+
+### Undesigned Experiment Bias
+
+When performing an research, the best way to go about it is to properly design a study before going out to collect the exact data we need. However, this wasn't the case in this report.
+
+We were given this dataset and we were forced to do our best with what we have. Thus, **it is possible we missed many variables which could have affected the death rate**. For example, we don't have information about wealth of a certain country in our datasets.
+
+**Wealth could certainly affect the death rate** of people in a certain country, by providing its residents with better nutrition, better healthcare, work in hygienic conditions and other stuff affecting their overall well-being, as well as their likelihood of catching a virus.
+
+### Personal Biases
+
+We all see our world through our biased minds. Thus, there is always a possibility of those **personal biasses affecting our analysis**.
+
+For example, many stories about Vitamin D efficacy against COVID 19 have surfaced during the pandemic. Personaly, I did believe this hypothesis about Vitamin D.
+
+Vitamin D levels depend on whether you live in sunny region or not, so there is a possibility that my belief about Vitamin D unconsciously affected my hypothesis of geographical location affecting the death rate instead of reasonable thinking.
+
+To rectify my bias, **I try not to make any claims without finding decent statistical proof** for what I am about to claim. Hopefully, this reduces the chance of invalidating my research due to my biases.
+
+
+
+## Session Info
+
+To make this report reproducible, the configuration used will be shown below. This list includes R version, Operating system, locale and packages in use.
+
+```{r session_info}
+sessionInfo()
+```
